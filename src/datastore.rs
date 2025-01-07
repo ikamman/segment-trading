@@ -33,14 +33,16 @@ impl IntervalStats {
 }
 
 pub struct SymbolDataStore {
+    capacity: usize,
     prices: VecDeque<f32>,
     interval_stats: HashMap<usize, IntervalStats>,
 }
 
 impl SymbolDataStore {
-    pub fn new(capasity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         let mut store = SymbolDataStore {
-            prices: VecDeque::with_capacity(capasity),
+            capacity,
+            prices: VecDeque::with_capacity(capacity),
             interval_stats: HashMap::new(),
         };
 
@@ -64,6 +66,9 @@ impl SymbolDataStore {
 
     pub fn add_batch(&mut self, prices: &[f32]) {
         prices.iter().for_each(|price| {
+            if self.prices.len() == self.capacity {
+                self.prices.pop_back();
+            }
             self.prices.push_front(*price);
         });
         self.init_stats();
@@ -71,7 +76,7 @@ impl SymbolDataStore {
     }
 
     pub fn get_stats(&self, k: u32) -> Option<&IntervalStats> {
-        self.interval_stats.get(&(10_usize.pow(k)))
+        self.interval_stats.get(&10_usize.pow(k))
     }
 
     // calculte stast for intervals window of size 10 pow of (1-8)
@@ -139,5 +144,19 @@ mod tests {
         assert_eq!(stats.sum, 30000.0);
         assert_eq!(stats.sum_squares, 50000.0);
         assert_eq!(stats.last, 2.0);
+    }
+
+    #[test]
+    fn test_capacity_not_growing() {
+        let capacity = 10_usize.pow(4);
+        let mut store = SymbolDataStore::new(capacity);
+
+        let data = vec![1.0; capacity];
+
+        store.add_batch(&data);
+        store.add_batch(&data);
+
+        assert_eq!(store.prices.capacity(), capacity);
+        assert_eq!(store.prices.len(), capacity);
     }
 }
