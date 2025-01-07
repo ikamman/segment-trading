@@ -1,4 +1,4 @@
-# Segment tree based statistics generation using range queries
+# Trade Statistics
 
 ## Build
 

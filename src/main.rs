@@ -5,8 +5,8 @@ use axum::{
 use manager::SymbolManager;
 use web::RouterHandle;
 
+mod datastore;
 mod manager;
-mod segment;
 mod web;
 
 #[tokio::main]

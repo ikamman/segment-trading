@@ -8,7 +8,7 @@ use crate::manager::{ManagerCommand, Stats, Symbol};
 #[derive(Deserialize)]
 pub struct AddBatchRequest {
     pub symbol: String,
-    pub values: Vec<f64>,
+    pub values: Vec<f32>,
 }
 
 // AddBatchResponse is a struct that represents the response body for the add_batch endpoint.

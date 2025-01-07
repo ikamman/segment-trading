@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-use crate::segment::{NodeData, SegmentTree};
+use crate::datastore::SymbolDataStore;
 
 // ManagerCommand is an enum that represents the commands that can be sent to the manager.
 pub enum ManagerCommand {
     AddBatch {
-        values: Vec<f64>,
+        values: Vec<f32>,
         resp: mpsc::Sender<String>,
     },
     GetStats {
@@ -20,11 +20,11 @@ pub enum ManagerCommand {
 // State represents the statistics of a symbol.
 #[derive(Serialize)]
 pub struct Stats {
-    pub min: f64,
-    pub max: f64,
-    pub last: f64,
-    pub avg: f64,
-    pub var: f64,
+    pub min: f32,
+    pub max: f32,
+    pub last: f32,
+    pub avg: f32,
+    pub var: f32,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -63,14 +63,14 @@ impl SymbolManager {
 }
 
 struct SymbolTask {
-    tree: SegmentTree,
+    store: SymbolDataStore,
     receiver: mpsc::Receiver<ManagerCommand>,
 }
 
 impl SymbolTask {
     fn new(receiver: mpsc::Receiver<ManagerCommand>) -> Self {
         Self {
-            tree: SegmentTree::new(),
+            store: SymbolDataStore::new(10usize.pow(8)),
             receiver,
         }
     }
@@ -84,50 +84,36 @@ impl SymbolTask {
                         continue;
                     }
 
-                    self.tree.add_batch(values.as_slice());
+                    self.store.add_batch(values.as_slice());
                     let _ = resp.send("Batch added successfully".to_string()).await;
                 }
 
                 ManagerCommand::GetStats { k, resp } => {
-                    let k = 10usize.pow(k);
-                    let total_elements = self.tree.current_position;
-                    let end = total_elements;
-                    let start = end.saturating_sub(k);
+                    let stats = self.store.get_stats(k);
 
-                    let NodeData {
-                        min,
-                        max,
-                        sum,
-                        sum_squares,
-                        count,
-                        last,
-                    } = self.tree.query_range(start, end);
+                    let response: Stats = stats
+                        .map(|stats| {
+                            let avg = stats.sum / stats.count as f32;
+                            let var = (stats.sum_squares / stats.count as f32) - (avg * avg);
 
-                    if count == 0 {
-                        let _ = resp
-                            .send(Stats {
-                                min: 0.0,
-                                max: 0.0,
-                                last: 0.0,
-                                avg: 0.0,
-                                var: 0.0,
-                            })
-                            .await;
-                        continue;
-                    }
-
-                    let avg = sum / count as f64;
-                    let var = (sum_squares / count as f64) - (avg * avg);
-
-                    let _ = resp
-                        .send(Stats {
-                            min,
-                            max,
-                            last,
-                            avg,
-                            var,
+                            Stats {
+                                min: stats.min,
+                                max: stats.max,
+                                last: stats.last,
+                                avg,
+                                var,
+                            }
                         })
-                        .await;
+                        .unwrap_or(Stats {
+                            min: 0.0,
+                            max: 0.0,
+                            last: 0.0,
+                            avg: 0.0,
+                            var: 0.0,
+                        });
+
+                    let _ = resp.send(response).await;
+                    continue;
                 }
             }
         }
