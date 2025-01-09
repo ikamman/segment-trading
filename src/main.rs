@@ -6,6 +6,7 @@ use manager::SymbolManager;
 use web::RouterHandle;
 
 mod datastore;
+mod interval_stat_deque;
 mod manager;
 mod web;
 

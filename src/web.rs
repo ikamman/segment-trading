@@ -21,7 +21,7 @@ pub struct AddBatchResponse {
 #[derive(Deserialize)]
 pub struct StatsRequest {
     pub symbol: String,
-    pub k: u32,
+    pub k: usize,
 }
 
 // RouterHandle is a struct that holds the manager_tx sender and forwards requests to the manager.

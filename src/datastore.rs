@@ -1,5 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 
+use crate::interval_stat_deque::{IntervalStatDeque, StatType};
+
+#[derive(Clone, Debug)]
 pub struct IntervalStats {
     pub min: f32,
     pub max: f32,
@@ -9,87 +12,88 @@ pub struct IntervalStats {
     pub last: f32,
 }
 
-impl Default for IntervalStats {
-    fn default() -> Self {
-        IntervalStats {
-            min: f32::MAX,
-            max: f32::MIN,
+pub struct IntervalStatsStore {
+    pub data: VecDeque<f32>,
+    pub interval: usize,
+    pub deque_min: IntervalStatDeque,
+    pub deque_max: IntervalStatDeque,
+    pub sum: f32,
+    pub sum_squares: f32,
+    pub last: f32,
+}
+
+impl IntervalStatsStore {
+    fn new(interval: usize) -> Self {
+        IntervalStatsStore {
+            data: VecDeque::new(),
+            interval,
+            deque_min: IntervalStatDeque::new(interval, StatType::Min),
+            deque_max: IntervalStatDeque::new(interval, StatType::Max),
             sum: 0.0,
             sum_squares: 0.0,
-            count: 0,
             last: 0.0,
         }
     }
-}
 
-impl IntervalStats {
     fn add(&mut self, value: f32) {
-        self.min = self.min.min(value);
-        self.max = self.max.max(value);
+        // adding new data
+        self.data.push_back(value);
+        // basic stats
         self.sum += value;
         self.sum_squares += value * value;
-        self.count += 1;
+        self.last = value;
+
+        // handling min and max
+        self.deque_min.push(value);
+        self.deque_max.push(value);
+
+        // handling to big window
+        if self.data.len() > self.interval {
+            if let Some(to_remove) = self.data.pop_front() {
+                self.sum -= to_remove;
+                self.sum_squares -= to_remove * to_remove;
+            }
+        }
+
+        println!("Count {}", self.data.len());
+    }
+
+    pub fn get_stats(&self) -> IntervalStats {
+        IntervalStats {
+            min: self.deque_min.stat(),
+            max: self.deque_max.stat(),
+            sum: self.sum,
+            sum_squares: self.sum_squares,
+            count: self.data.len(),
+            last: self.last,
+        }
     }
 }
 
 pub struct SymbolDataStore {
-    capacity: usize,
-    prices: VecDeque<f32>,
-    interval_stats: HashMap<usize, IntervalStats>,
+    intervals: HashMap<usize, IntervalStatsStore>,
 }
 
 impl SymbolDataStore {
-    pub fn new(capacity: usize) -> Self {
-        let mut store = SymbolDataStore {
-            capacity,
-            prices: VecDeque::with_capacity(capacity),
-            interval_stats: HashMap::new(),
-        };
+    pub fn new(num_of_intervals: usize) -> Self {
+        let mut intervals = HashMap::new();
+        (1..=num_of_intervals).for_each(|i| {
+            intervals.insert(i, IntervalStatsStore::new(10_usize.pow(i as u32)));
+        });
 
-        store.init_stats();
-        store
-    }
-
-    fn init_stats(&mut self) {
-        self.interval_stats.clear();
-        let last = self.prices.front().unwrap_or(&0.0);
-        for i in 1..=self.prices.capacity().ilog10() {
-            self.interval_stats.insert(
-                10_usize.pow(i),
-                IntervalStats {
-                    last: *last,
-                    ..IntervalStats::default()
-                },
-            );
-        }
+        SymbolDataStore { intervals }
     }
 
     pub fn add_batch(&mut self, prices: &[f32]) {
         prices.iter().for_each(|price| {
-            if self.prices.len() == self.capacity {
-                self.prices.pop_back();
-            }
-            self.prices.push_front(*price);
+            self.intervals.iter_mut().for_each(|(_, stats)| {
+                stats.add(*price);
+            });
         });
-        self.init_stats();
-        self.calculate_intervals();
     }
 
-    pub fn get_stats(&self, k: u32) -> Option<&IntervalStats> {
-        self.interval_stats.get(&10_usize.pow(k))
-    }
-
-    // calculte stast for intervals window of size 10 pow of (1-8)
-    fn calculate_intervals(&mut self) {
-        self.prices.iter().enumerate().for_each(|(i, price)| {
-            self.interval_stats
-                .iter_mut()
-                .for_each(|(interval, stats)| {
-                    if i / interval == 0 {
-                        stats.add(*price);
-                    }
-                })
-        });
+    pub fn get_stats(&self, k: usize) -> Option<IntervalStats> {
+        self.intervals.get(&k).map(|stats| stats.get_stats())
     }
 }
 
@@ -99,15 +103,16 @@ mod tests {
 
     #[test]
     fn test_add_batch() {
-        let k = 8usize;
-        let mut store = SymbolDataStore::new(10_usize.pow(k as u32));
+        let k = 8_usize;
+        let mut store = SymbolDataStore::new(k);
 
         // adding 10000 prices
         store.add_batch(&vec![1.0; 10000]);
-        assert_eq!(store.prices.len(), 10000);
-        assert_eq!(store.interval_stats.len(), k);
-        store.interval_stats.iter().for_each(|(interval, stats)| {
-            let count = 10000usize.min(*interval);
+        assert_eq!(store.intervals.get(&4).unwrap().data.len(), 10000);
+        store.intervals.iter().for_each(|(interval, stats)| {
+            let count = 10000.min(10_usize.pow(*interval as u32));
+            println!("Interval {} Count {}", interval, count);
+            let stats = stats.get_stats();
             assert_eq!(stats.count, count);
             assert_eq!(stats.min, 1.0);
             assert_eq!(stats.max, 1.0);
@@ -118,10 +123,8 @@ mod tests {
 
         // adding another 10000 prices
         store.add_batch(&vec![2.0; 10000]);
-        assert_eq!(store.prices.len(), 20000);
-        assert_eq!(store.interval_stats.len(), k);
 
-        let stats = store.interval_stats.get(&10000usize).unwrap();
+        let stats = store.get_stats(4).unwrap();
         assert_eq!(stats.count, 10000);
         assert_eq!(stats.min, 2.0);
         assert_eq!(stats.max, 2.0);
@@ -129,7 +132,7 @@ mod tests {
         assert_eq!(stats.sum_squares, 40000.0);
         assert_eq!(stats.last, 2.0);
 
-        let stats = store.interval_stats.get(&1000usize).unwrap();
+        let stats = store.get_stats(3).unwrap();
         assert_eq!(stats.count, 1000);
         assert_eq!(stats.min, 2.0);
         assert_eq!(stats.max, 2.0);
@@ -137,7 +140,7 @@ mod tests {
         assert_eq!(stats.sum_squares, 4000.0);
         assert_eq!(stats.last, 2.0);
 
-        let stats = store.interval_stats.get(&100_000).unwrap();
+        let stats = store.get_stats(5).unwrap();
         assert_eq!(stats.count, 20000);
         assert_eq!(stats.min, 1.0);
         assert_eq!(stats.max, 2.0);
@@ -148,15 +151,16 @@ mod tests {
 
     #[test]
     fn test_capacity_not_growing() {
-        let capacity = 10_usize.pow(4);
-        let mut store = SymbolDataStore::new(capacity);
+        let num_of_intervals = 4;
+        let mut store = SymbolDataStore::new(num_of_intervals);
 
-        let data = vec![1.0; capacity];
+        let data = vec![1.0; 10_usize.pow(num_of_intervals as u32)];
 
-        store.add_batch(&data);
-        store.add_batch(&data);
-
-        assert_eq!(store.prices.capacity(), capacity);
-        assert_eq!(store.prices.len(), capacity);
+        for _ in 0..1000 {
+            store.add_batch(&data);
+        }
+        store.intervals.iter().for_each(|(_, stats)| {
+            assert_eq!(stats.data.len(), stats.interval);
+        });
     }
 }

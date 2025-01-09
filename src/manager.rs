@@ -12,7 +12,7 @@ pub enum ManagerCommand {
         resp: mpsc::Sender<String>,
     },
     GetStats {
-        k: u32,
+        k: usize,
         resp: mpsc::Sender<Stats>,
     },
 }
